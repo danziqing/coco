@@ -4,7 +4,7 @@
 > 一个简单、开放且强大的自托管图像托管解决方案。
 
 [![Stars](https://img.shields.io/github/stars/qazzxxx/cloudimgs?style=flat-square&logo=github&label=Stars)](https://github.com/qazzxxx/cloudimgs/stargazers)
-[![Forks](https://img.shields.io/github/forks/qazzxxx/cloudimgs?style=flat-square&logo=github&label=Forks)](https://github.com/qazzxxx/cloudimgs/network/members)
+[![Forks](https://img.shields.io/github/stars/qazzxxx/cloudimgs?style=flat-square&logo=github&label=Forks)](https://github.com/qazzxxx/cloudimgs/network/members)
 [![Release](https://img.shields.io/github/v/release/qazzxxx/cloudimgs?style=flat-square&color=blue)](https://github.com/qazzxxx/cloudimgs/releases)
 
 ---
@@ -38,7 +38,7 @@
 - [x] **移动适配**：完美适配移动端。
 
 ### ⚡️ 高级特性
-- [x] **魔法搜索**：基于CLIP本地小模型，支持自然语言搜索（如搜“蓝天白云”）。
+- [x] **魔法搜索**：基于CLIP本地小模型，支持自然语言搜索（如搜"蓝天白云"）。
 - [x] **流量看板**：直观展示流量使用情况。
 - [x] **照片轨迹**：在地图上展示照片拍摄轨迹。
 - [x] **性能优化**：集成 `thumbhash` 无感生成缩略图，大幅优化加载体验。
@@ -141,4 +141,4 @@ services:
 
 ## 📈 历史 Star | Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=qazzxxx/cloudimgs&type=date&legend=top-left)](https://www.star-history.com/#qazzxxx/cloudimgs&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=qazzxxx/cloudimgs&type=date&legend=top-left)](https://www.star-history.com/#repos=qazzxxx/cloudimgs&type=date&legend=top-left)
