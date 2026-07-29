@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          commitMode: true
+          configurationJson: |
+            {
+              "categories": [
+                {
+                  "title": "## 🚀 Features",
+                  "labels": ["feature", "feat"]
+                },
+                {
+                  "title": "## 🐛 Fixes",
+                  "labels": ["fix", "bug"]
+                },
+                {
+                  "title": "## 📦 Chore",
+                  "labels": ["chore"]
+                },
+                {
+                  "title": "## 💬 Other",
+                  "labels": []
+                }
+              ],
+              "label_extractor": [
+                {
+                  "pattern": "^(feat|fix|chore|bug|perf|refactor|test)(?:\\([^\\)]+\\))?: .+$",
+                  "target": "$1"
+                }
+              ],
+              "template": "#{{CHANGELOG}}",
+              "pr_template": "- #{{TITLE}} by @#{{AUTHOR}} in ##{{NUMBER}}",
+              "ignore_before": "v1.0.0"
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.build_changelog.outputs.changelog }}

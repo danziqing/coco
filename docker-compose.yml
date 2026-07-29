@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  cloudimgs:
+    # 使用 GitHub Packages 镜像
+    image: qazzxxx/cloudimgs:latest
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./uploads:/app/uploads:rw # 上传目录配置，明确读写权限
+    restart: unless-stopped
+    container_name: cloudimgs-app
+    environment:
+      - PUID=1000  # 替换为您 NAS 用户的实际 ID (id -u)
+      - PGID=1000   # 替换为您 NAS 用户组的实际 ID (id -g)
+      - UMASK=002
+      - NODE_ENV=production
+      - PORT=3001
+      - STORAGE_PATH=/app/uploads
+      # 密码保护配置（可选）
+      # - PASSWORD=your_password_here

@@ -1,0 +1,2450 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import {
+  Masonry,
+  Button,
+  Typography,
+  Modal,
+  message,
+  Popconfirm,
+  Tabs,
+  Input,
+  Empty,
+  Spin,
+  Grid,
+  theme,
+  Popover,
+} from "antd";
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  CopyOutlined,
+  EditOutlined,
+  SearchOutlined,
+  FolderOutlined,
+  MenuOutlined,
+  ApiOutlined,
+  CloudUploadOutlined,
+  EnvironmentOutlined,
+  CodeOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  AreaChartOutlined,
+  ThunderboltOutlined,
+  SettingOutlined,
+} from "@ant-design/icons";
+import { thumbHashToDataURL } from "thumbhash";
+import DirectorySelector from "./DirectorySelector";
+import SvgToolModal from "./SvgToolModal";
+import AlbumManager from "./AlbumManager";
+import ImageDetailModal from "./ImageDetailModal";
+import ImageEditModal from "./ImageEditModal";
+import SettingsModal from "./SettingsModal";
+import dayjs from "dayjs";
+
+const { Title, Text } = Typography;
+
+const getCacheBustedUrl = (img, width = 0) => {
+  if (!img) return "";
+  let u = img.url;
+  if (!u) return "";
+  // 服务端 URL 已带 ?t=<mtime>，前端不再重复追加
+  if (width > 0) {
+    u += u.includes('?') ? `&w=${width}` : `?w=${width}`;
+  }
+  return u;
+};
+// Helper to convert base64 thumbhash to data URL
+const getThumbHashUrl = (hash) => {
+  if (!hash) return null;
+  try {
+    const binary = Uint8Array.from(atob(hash), c => c.charCodeAt(0));
+    return thumbHashToDataURL(binary);
+  } catch (e) {
+    console.error("ThumbHash decode error:", e);
+    return null;
+  }
+};
+
+
+const SkeletonCard = ({ count = 10, columns = 4, gutter = 8, isDarkMode }) => {
+  const baseColor = isDarkMode ? '#2a2a2a' : '#f0f0f0';
+  const shimmerColor = isDarkMode ? '#3a3a3a' : '#e0e0e0';
+  const cardStyle = {
+    borderRadius: 8,
+    overflow: 'hidden',
+    background: baseColor,
+  };
+  const heights = [200, 240, 180, 260, 220, 190, 250, 210, 230, 200];
+  const cards = Array.from({ length: count }, (_, i) => (
+    <div key={i} style={cardStyle}>
+      <div style={{
+        width: '100%',
+        height: heights[i % heights.length],
+        background: `linear-gradient(90deg, ${baseColor} 25%, ${shimmerColor} 50%, ${baseColor} 75%)`,
+        backgroundSize: '200% 100%',
+        animation: 'skeleton-shimmer 1.5s ease-in-out infinite',
+      }} />
+      <div style={{ padding: '8px 10px' }}>
+        <div style={{ width: '60%', height: 12, borderRadius: 4, background: shimmerColor,
+          backgroundSize: '200% 100%', animation: 'skeleton-shimmer 1.5s ease-in-out infinite 0.1s' }} />
+        <div style={{ width: '40%', height: 10, borderRadius: 4, background: shimmerColor, marginTop: 6,
+          backgroundSize: '200% 100%', animation: 'skeleton-shimmer 1.5s ease-in-out infinite 0.2s' }} />
+      </div>
+    </div>
+  ));
+
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: `repeat(${columns}, 1fr)`,
+    gap: gutter,
+  };
+
+  return (
+    <>
+      <style>{`
+        @keyframes skeleton-shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
+      <div style={gridStyle}>{cards}</div>
+    </>
+  );
+};
+
+const encodePath = (path) => {
+  if (!path) return "";
+  return path.split('/').map(encodeURIComponent).join('/');
+};
+
+const ImageItem = ({
+  image,
+  hoverKey,
+  setHoverKey,
+  handlePreview,
+  formatFileSize,
+  isMobile,
+  handleDownload,
+  onCopyClick,
+  handleDelete,
+  handleEdit,
+  hoverLocation,
+  isBatchMode,
+  isSelected,
+  isGuest,
+  onToggleSelect,
+  registerRef,
+  thumbnailWidth = 0,
+  imageRadius = 0,
+}) => {
+  const [loaded, setLoaded] = useState(false);
+  const videoRef = useRef(null);
+  const {
+    token: { colorBgContainer, colorPrimary },
+  } = theme.useToken();
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    const key = image.relPath || image.url || image.filename;
+
+    if (hoverKey === key) {
+      videoRef.current.currentTime = 0;
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => { });
+      }
+    } else {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+  }, [hoverKey, image]);
+
+  return (
+    <div
+      ref={(node) => registerRef && registerRef(image.relPath, node)}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        borderRadius: imageRadius,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+        transition: "transform 0.3s ease, border-radius 0.25s ease",
+        background: colorBgContainer,
+        cursor: isBatchMode ? "default" : "zoom-in",
+        transform: isBatchMode && isSelected ? "scale(0.95)" : "scale(1)",
+      }}
+      onMouseEnter={() => {
+        if (!isBatchMode) {
+          setHoverKey(image.relPath || image.url || image.filename);
+        }
+      }}
+      onMouseLeave={() => {
+        if (!isBatchMode) {
+          setHoverKey(null);
+        }
+      }}
+      onClick={(e) => {
+        if (isBatchMode) {
+          e.stopPropagation();
+          onToggleSelect && onToggleSelect(image.relPath);
+        } else {
+          handlePreview(image);
+        }
+      }}
+    >
+      {/* Batch Selection Overlay */}
+      {isBatchMode && (
+        <>
+          <div style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            zIndex: 20,
+            pointerEvents: 'none',
+          }}>
+            <div style={{
+              width: 24,
+              height: 24,
+              borderRadius: '50%',
+              border: '2px solid #fff',
+              background: isSelected ? colorPrimary : 'rgba(0,0,0,0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              transition: 'background 0.2s'
+            }}>
+              {isSelected && <CheckOutlined style={{ color: '#fff', fontSize: 14 }} />}
+            </div>
+          </div>
+          {isSelected && (
+            <div style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              border: `4px solid ${colorPrimary}`,
+              zIndex: 15,
+              pointerEvents: "none",
+            }} />
+          )}
+        </>
+      )}
+
+      <div
+        style={{
+          overflow: "hidden",
+          position: "relative",
+          background: colorBgContainer,
+        }}
+      >
+        {/* ThumbHash Placeholder Layer */}
+        {image.thumbhash && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundImage: `url(${getThumbHashUrl(image.thumbhash)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: 'blur(5px)', // Optional: slight blur to smooth out artifacts
+              transform: 'scale(1.1)', // Prevent blur edges
+              opacity: loaded ? 0 : 1,
+              transition: "opacity 0.5s ease-out",
+              zIndex: 1,
+            }}
+          />
+        )}
+
+        {/* Real Image/Video Layer */}
+        {(() => {
+          const isVideo = /\.(mp4|webm)$/i.test(image.filename);
+          const isGif = /\.gif$/i.test(image.filename);
+          // GIF 使用原始文件路径，保留完整动画（与详情页策略一致）
+          const gifSrc = image.url.replace(/^\/api\/images\//, "/api/files/");
+          if (isVideo) {
+            return (
+              <video
+                ref={videoRef}
+                src={getCacheBustedUrl(image)}
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "block",
+                  objectFit: "cover",
+                  transition: "transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.5s ease-in",
+                  transform:
+                    hoverKey === (image.relPath || image.url || image.filename)
+                      ? "scale(1.05)"
+                      : "scale(1)",
+                  opacity: loaded ? 1 : 0,
+                  position: "relative",
+                  zIndex: 2,
+                }}
+                onLoadedData={() => setLoaded(true)}
+              />
+            );
+          }
+          return (
+            <img
+              alt={image.filename}
+              src={isGif ? gifSrc : getCacheBustedUrl(image, thumbnailWidth)}
+              draggable={false}
+              loading="lazy"
+              onLoad={() => setLoaded(true)}
+              style={{
+                width: "100%",
+                display: "block",
+                transition: "transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.5s ease-in",
+                transform:
+                  hoverKey ===
+                    (image.relPath || image.url || image.filename)
+                    ? "scale(1.05)"
+                    : "scale(1)",
+                opacity: loaded ? 1 : 0, // Fade in when loaded
+                position: "relative",
+                zIndex: 2,
+              }}
+            />
+          );
+        })()}
+      </div>
+
+      {/* Advanced Hover Overlay */}
+      {!isMobile && !isBatchMode && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background:
+              "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 40%, rgba(0,0,0,0) 100%)",
+            opacity:
+              hoverKey === (image.relPath || image.url || image.filename)
+                ? 1
+                : 0,
+            transition: "opacity 0.3s ease",
+            zIndex: 10,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "flex-end",
+            padding: "20px",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              transform:
+                hoverKey === (image.relPath || image.url || image.filename)
+                  ? "translateY(0)"
+                  : "translateY(10px)",
+              transition: "transform 0.3s ease",
+              pointerEvents: "auto",
+            }}
+          >
+            {/* Title / Filename */}
+            <div
+              style={{
+                color: "#fff",
+                fontSize: "18px",
+                fontWeight: 700,
+                marginBottom: "4px",
+                lineHeight: 1.2,
+                textShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                wordBreak: "break-all",
+              }}
+            >
+              {image.filename.replace(/\.[^/.]+$/, "")}
+            </div>
+
+            {/* Metadata Row */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                color: "rgba(255,255,255,0.8)",
+                fontSize: "12px",
+                marginBottom: "12px",
+                flexWrap: "wrap",
+              }}
+            >
+              <span>
+                {dayjs(image.uploadTime).format("YYYY-MM-DD")}
+              </span>
+              <span>·</span>
+              <span>{formatFileSize(image.size)}</span>
+              {hoverLocation && (
+                <>
+                  <span>·</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <EnvironmentOutlined /> {hoverLocation}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: "flex", gap: "8px" }}>
+              <Button
+                size="small"
+                type="text"
+                icon={<DownloadOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownload(image);
+                }}
+                style={{
+                  color: "#fff",
+                  background: "rgba(255,255,255,0.2)",
+                  backdropFilter: "blur(4px)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                }}
+              >
+                下载
+              </Button>
+              <Button
+                size="small"
+                type="text"
+                icon={<CopyOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopyClick(image);
+                }}
+                style={{
+                  color: "#fff",
+                  background: "rgba(255,255,255,0.2)",
+                  backdropFilter: "blur(4px)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                }}
+              >
+              </Button>
+              {!isGuest && !(/\.(mp4|webm)$/i.test(image.filename)) && (
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<EditOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEdit(image);
+                  }}
+                  style={{
+                    color: "#fff",
+                    background: "rgba(255,255,255,0.2)",
+                    backdropFilter: "blur(4px)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                  }}
+                >
+                </Button>
+              )}
+              {!isGuest && (
+                <Popconfirm
+                  title="确定删除?"
+                  onConfirm={(e) => {
+                    e.stopPropagation();
+                    handleDelete(image.relPath);
+                  }}
+                  onCancel={(e) => {
+                    e?.stopPropagation();
+                  }}
+                  okText="是"
+                  cancelText="否"
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      background: "rgba(0,0,0,0.4)",
+                      backdropFilter: "blur(4px)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                    }}
+                  />
+                </Popconfirm>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+const MagicIcon = ({ active }) => (
+  <div style={{ position: 'relative', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{
+        filter: active ? "drop-shadow(0 0 8px rgba(139, 92, 246, 0.5))" : "none",
+        transition: "all 0.5s ease"
+      }}
+    >
+      <defs>
+        <linearGradient id="star-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor={active ? "#8B5CF6" : "#888"} />
+          <stop offset="100%" stopColor={active ? "#3B82F6" : "#888"} />
+        </linearGradient>
+      </defs>
+
+      {/* Main Star (Center-Left) */}
+      <path
+        d="M10 2L12 8L18 10L12 12L10 18L8 12L2 10L8 8L10 2Z"
+        fill="url(#star-gradient)"
+        className={active ? "gemini-star-main" : ""}
+        style={{ transformOrigin: "10px 10px", opacity: active ? 1 : 0.6 }}
+      />
+
+      {/* Medium Star (Top-Right) */}
+      <path
+        d="M19 2L20 5L23 6L20 7L19 10L18 7L15 6L18 5L19 2Z"
+        fill="url(#star-gradient)"
+        className={active ? "gemini-star-medium" : ""}
+        style={{ transformOrigin: "19px 6px", opacity: active ? 0.9 : 0 }}
+      />
+
+      {/* Small Star (Bottom-Right) */}
+      <path
+        d="M18 14L18.5 15.5L20 16L18.5 16.5L18 18L17.5 16.5L16 16L17.5 15.5L18 14Z"
+        fill="url(#star-gradient)"
+        className={active ? "gemini-star-small" : ""}
+        style={{ transformOrigin: "18px 16px", opacity: active ? 0.8 : 0 }}
+      />
+
+      <style>
+        {`
+          @keyframes star-pulse {
+             0%, 100% { transform: scale(1); opacity: 1; }
+             50% { transform: scale(0.85); opacity: 0.85; }
+          }
+          @keyframes star-twinkle {
+             0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+             50% { transform: scale(0.6) rotate(15deg); opacity: 0.7; }
+          }
+           @keyframes star-float {
+             0%, 100% { transform: translateY(0); }
+             50% { transform: translateY(-1px); }
+          }
+
+          .gemini-star-main {
+             animation: ${active ? "star-pulse 3s ease-in-out infinite" : "none"};
+          }
+          .gemini-star-medium {
+             animation: ${active ? "star-twinkle 4s ease-in-out infinite" : "none"};
+          }
+          .gemini-star-small {
+             animation: ${active ? "star-twinkle 2.5s ease-in-out infinite 0.5s" : "none"};
+          }
+          
+          /* Rotating Border Gradient Definition */
+          @property --angle {
+            syntax: '<angle>';
+            initial-value: 0deg;
+            inherits: false;
+          }
+          
+          @keyframes spin-border {
+            from { --angle: 0deg; }
+            to { --angle: 360deg; }
+          }
+          
+          .gemini-capsule-container {
+            position: relative;
+            z-index: 0;
+            /* Ensure no jumps: border is expanding OUTSIDE */
+          }
+          
+          .gemini-capsule-container.active::before {
+            content: "";
+            position: absolute;
+            inset: -1.5px; /* 1.5px Border Thickness */
+            z-index: -1;
+            border-radius: 100px;
+            padding: 1.5px; 
+            background: conic-gradient(from 180deg, #4285F4, #9B72CB, #D96570, #F49CBB, #FBBC05, #34A853, #4285F4) border-box;
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+          }
+          
+          /* Fallback for browsers not supporting @property for smooth conic rotation */
+          /* We can use a simpler background rotation if needed, but modern browsers support this */
+        `}
+      </style>
+    </svg>
+  </div>
+);
+
+const ImageGallery = ({ onDelete, onRefresh, api, isAuthenticated, isGuest, refreshTrigger, isBatchMode = false, selectedItems = new Set(), onSelectionChange = () => { }, imageRadius = 0, currentTheme, onThemeChange, settings, onSettingsChange }) => {
+  const {
+    token: { colorBgContainer, colorPrimary, colorTextSecondary, colorText },
+  } = theme.useToken();
+  const { useBreakpoint } = Grid;
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
+  const isDark = theme.useToken().theme?.id === 1 || colorBgContainer === "#141414";
+  const isDarkMode = colorBgContainer === "#141414" || colorBgContainer === "#000000" || colorBgContainer === "#1f1f1f";
+
+  // Helper to determine if a color is light or dark (returns true if light)
+  const isLightColor = (r, g, b) => {
+    // Calculate relative luminance using standard formula
+    // Y = 0.2126R + 0.7152G + 0.0722B
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luminance > 0.6; // Threshold for considering it "light"
+  };
+
+  // Define capsule styles based on theme
+  const capsuleStyle = {
+    background: isDarkMode ? "rgba(0, 0, 0, 0.65)" : "rgba(255, 255, 255, 0.65)",
+    border: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.15)" : "rgba(255, 255, 255, 0.4)"}`,
+    boxShadow: isDarkMode ? "0 8px 32px rgba(0, 0, 0, 0.4)" : "0 8px 32px rgba(0, 0, 0, 0.08)",
+    dividerColor: isDarkMode ? "rgba(255, 255, 255, 0.15)" : "rgba(0,0,0,0.1)",
+    iconColor: isDarkMode ? "rgba(255, 255, 255, 0.45)" : "rgba(0,0,0,0.4)",
+  };
+
+  const [searchText, setSearchText] = useState("");
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewImage, setPreviewImage] = useState("");
+  const [previewTitle, setPreviewTitle] = useState("");
+  const [previewFile, setPreviewFile] = useState(null);
+  const [dir, setDir] = useState("");
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [hoverKey, setHoverKey] = useState(null);
+  const [hoverLocation, setHoverLocation] = useState("");
+  const [svgToolVisible, setSvgToolVisible] = useState(false);
+  const [albumManagerVisible, setAlbumManagerVisible] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [directoryRefreshKey, setDirectoryRefreshKey] = useState(0);
+  const [copyModalVisible, setCopyModalVisible] = useState(false);
+  const [copyTargetImage, setCopyTargetImage] = useState(null);
+
+  // Album Password Logic
+  const [albumPasswords, setAlbumPasswords] = useState({}); // { "dir": "password" }
+  const [passwordPromptVisible, setPasswordPromptVisible] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [pendingDir, setPendingDir] = useState(null); // The directory that required password
+
+ // Thumbnail width from config (0 = use original)
+ // Thumbnail width from config (0 = use original)
+  const [thumbnailWidth, setThumbnailWidth] = useState(0);
+
+  // Magic Search
+  const [magicSearch, setMagicSearch] = useState(false);
+  const [magicSearchAvailable, setMagicSearchAvailable] = useState(false);
+
+  // Fetch config to get thumbnailWidth
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await api.get("/config");
+        if (response.data.success) {
+          if (response.data.data?.upload?.thumbnailWidth) {
+            setThumbnailWidth(response.data.data.upload.thumbnailWidth);
+          }
+          if (response.data.data?.magicSearch?.enabled) {
+            setMagicSearchAvailable(true);
+            setMagicSearch(true); // Default to enabled
+          }
+        }
+      } catch (error) {
+        console.warn("获取配置失败:", error);
+      }
+    };
+    fetchConfig();
+  }, [api]);
+
+  useEffect(() => {
+    if (!hoverKey) {
+      setHoverLocation("");
+      return;
+    }
+
+    // Find image
+    const img = images.find(i => (i.relPath || i.url || i.filename) === hoverKey);
+    if (!img) return;
+
+    // Debounce slightly or just fetch
+    let active = true;
+
+    const fetchLoc = async () => {
+      try {
+        // 1. Get Meta
+        const res = await api.get(`/images/meta/${encodePath(img.relPath)}`);
+        if (!active) return;
+
+        if (res.data?.success && res.data.data?.exif?.latitude) {
+          const { latitude, longitude } = res.data.data.exif;
+
+          // 2. Reverse Geocode
+          // Use a public API (Nominatim)
+          // Note: In production, consider caching this or moving to backend
+          const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=zh-CN`);
+          const geoData = await geoRes.json();
+
+          if (active && geoData) {
+            // Extract city/district
+            const addr = geoData.address;
+            // Try to find the most relevant "city" level name
+            const city = addr.city || addr.town || addr.county || addr.district || addr.state;
+            setHoverLocation(city ? `${city}` : (geoData.display_name ? geoData.display_name.split(',')[0] : "未知位置"));
+          }
+        }
+      } catch (e) {
+        // console.error(e); // Silent fail for location fetch
+      }
+    };
+
+    // Delay to avoid spamming on fast scroll
+    const timer = setTimeout(fetchLoc, 300);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [hoverKey, images, api]);
+
+  const handleCopyClick = useCallback((image) => {
+    setCopyTargetImage(image);
+    setCopyModalVisible(true);
+  }, []);
+
+  const generateImageLinks = (image, type) => {
+    if (!image) return "";
+    const fullUrl = `${window.location.origin}${image.url}`;
+    switch (type) {
+      case "markdown":
+        return `![${image.filename}](${fullUrl})`;
+      case "html":
+        return `<img src="${fullUrl}" alt="${image.filename}" />`;
+      case "url":
+      default:
+        return fullUrl;
+    }
+  };
+
+  const CopyLinksModal = () => {
+    const [activeTab, setActiveTab] = useState("url");
+    const content = generateImageLinks(copyTargetImage, activeTab);
+
+    const items = [
+      { key: "url", label: "URL" },
+      { key: "markdown", label: "Markdown" },
+      { key: "html", label: "HTML" },
+    ];
+
+    return (
+      <Modal
+        title="复制链接"
+        open={copyModalVisible}
+        onCancel={() => {
+          setCopyModalVisible(false);
+          setCopyTargetImage(null);
+        }}
+        footer={null}
+        width={500}
+        centered
+        zIndex={1005} // Match upload overlay z-index
+      >
+        <div
+          style={{
+            background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.02)",
+            padding: 16,
+            borderRadius: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Tabs
+              activeKey={activeTab}
+              onChange={setActiveTab}
+              items={items}
+              size="small"
+              style={{ marginBottom: 0 }}
+              tabBarStyle={{ marginBottom: 0, borderBottom: "none" }}
+            />
+            <Button
+              type="primary"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => {
+                copyToClipboard(content);
+                setCopyModalVisible(false);
+                setCopyTargetImage(null);
+              }}
+            >
+              一键复制
+            </Button>
+          </div>
+          <Input.TextArea
+            value={content}
+            autoSize={{ minRows: 3, maxRows: 6 }}
+            readOnly
+            style={{
+              fontFamily: "monospace",
+              fontSize: 12,
+              background: isDarkMode ? "#141414" : "#fff",
+              color: isDarkMode ? "rgba(255,255,255,0.85)" : undefined,
+            }}
+          />
+        </div>
+      </Modal>
+    );
+  };
+
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadMoreRef = useRef(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [imageMeta, setImageMeta] = useState(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [isEditingDir, setIsEditingDir] = useState(false);
+  const [dirValue, setDirValue] = useState("");
+
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState([]);
+  const [sessionUploadedFiles, setSessionUploadedFiles] = useState([]);
+  const uploading = uploadQueue.some(item => item.status === 'pending' || item.status === 'uploading');
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editorFile, setEditorFile] = useState(null);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const editorGetCurrentImgDataRef = useRef(null);
+
+  // Drag Selection Logic
+  const imageRefs = useRef(new Map());
+  const [selectionBox, setSelectionBox] = useState(null);
+
+  const registerRef = useCallback((id, node) => {
+    if (node) {
+      imageRefs.current.set(id, node);
+    } else {
+      imageRefs.current.delete(id);
+    }
+  }, []);
+
+  const handleSelectionMouseDown = (e) => {
+    if (!isBatchMode) return;
+    if (e.button !== 0) return; // Only left click
+
+    // Prevent text selection
+    // document.body.style.userSelect = 'none'; // Done in effect
+
+    setSelectionBox({
+      startX: e.pageX,
+      startY: e.pageY,
+      currentX: e.pageX,
+      currentY: e.pageY,
+      isSelecting: true,
+      initialSelection: new Set(selectedItems)
+    });
+  };
+
+  useEffect(() => {
+    if (!selectionBox?.isSelecting) return;
+
+    document.body.style.userSelect = 'none';
+
+    const handleSelectionMouseMove = (e) => {
+      setSelectionBox(prev => ({
+        ...prev,
+        currentX: e.pageX,
+        currentY: e.pageY
+      }));
+    };
+
+    const handleSelectionMouseUp = (e) => {
+      document.body.style.userSelect = '';
+      setSelectionBox(null);
+    };
+
+    window.addEventListener('mousemove', handleSelectionMouseMove);
+    window.addEventListener('mouseup', handleSelectionMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleSelectionMouseMove);
+      window.removeEventListener('mouseup', handleSelectionMouseUp);
+      document.body.style.userSelect = '';
+    };
+  }, [selectionBox?.isSelecting]);
+
+  // Real-time selection update
+  useEffect(() => {
+    if (!selectionBox?.isSelecting) return;
+
+    const { startX, startY, currentX, currentY, initialSelection } = selectionBox;
+    const left = Math.min(startX, currentX);
+    const top = Math.min(startY, currentY);
+    const width = Math.abs(currentX - startX);
+    const height = Math.abs(currentY - startY);
+
+    if (width < 5 && height < 5) return;
+
+    const animationFrame = requestAnimationFrame(() => {
+      const newSelected = new Set(initialSelection);
+      imageRefs.current.forEach((node, relPath) => {
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        const nodeLeft = rect.left + window.scrollX;
+        const nodeTop = rect.top + window.scrollY;
+
+        if (
+          left < nodeLeft + rect.width &&
+          left + width > nodeLeft &&
+          top < nodeTop + rect.height &&
+          top + height > nodeTop
+        ) {
+          newSelected.add(relPath);
+        }
+      });
+
+      // Simple check to avoid unnecessary updates if size hasn't changed?
+      // But Set content might change.
+      onSelectionChange(newSelected);
+    });
+
+    return () => cancelAnimationFrame(animationFrame);
+  }, [selectionBox?.currentX, selectionBox?.currentY]);
+
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const img of images) {
+      const key = dayjs(img.uploadTime).format("YYYY年MM月DD日");
+      const arr = map.get(key) || [];
+      arr.push(img);
+      map.set(key, arr);
+    }
+    const dates = Array.from(map.keys()).sort(
+      (a, b) => dayjs(b).valueOf() - dayjs(a).valueOf()
+    );
+    return dates.map((d) => ({ date: d, items: map.get(d) }));
+  }, [images]);
+
+  const getEditorDefaults = useCallback((file) => {
+    const filename = file?.filename || "image";
+    const lastDot = filename.lastIndexOf(".");
+    const baseName = lastDot > 0 ? filename.slice(0, lastDot) : filename;
+    const ext = lastDot > 0 ? filename.slice(lastDot + 1).toLowerCase() : "png";
+    const normalizedExt = ext === "jpeg" ? "jpg" : ext;
+    const type =
+      normalizedExt === "jpg" || normalizedExt === "png" || normalizedExt === "webp"
+        ? normalizedExt
+        : "png";
+    return { baseName, type };
+  }, []);
+
+  const handleEdit = useCallback((img) => {
+    setEditorFile(img);
+    setEditorVisible(true);
+  }, []);
+
+  const getDirFromRelPath = useCallback((relPath) => {
+    if (!relPath) return "";
+    const idx = relPath.lastIndexOf("/");
+    return idx >= 0 ? relPath.slice(0, idx) : "";
+  }, []);
+
+  const splitFilename = useCallback((filename) => {
+    const safe = filename || "image.png";
+    const lastDot = safe.lastIndexOf(".");
+    if (lastDot <= 0) return { baseName: safe, ext: "png" };
+    return { baseName: safe.slice(0, lastDot), ext: safe.slice(lastDot + 1).toLowerCase() };
+  }, []);
+
+  const dataUrlToFile = useCallback((dataUrl, filename) => {
+    const commaIndex = dataUrl.indexOf(",");
+    const header = commaIndex >= 0 ? dataUrl.slice(0, commaIndex) : "";
+    const base64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+    const mimeMatch = header.match(/data:([^;]+);base64/i);
+    const mimeType = mimeMatch?.[1] || "application/octet-stream";
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], filename, { type: mimeType });
+  }, []);
+
+  async function refreshAfterEdit(targetDir) {
+    setCurrentPage(1);
+    setHasMore(true);
+    await fetchImages(targetDir, 1, pageSize, searchText, false);
+  }
+
+  const exportFromEditor = useCallback((name, extension) => {
+    if (!editorGetCurrentImgDataRef.current) {
+      throw new Error("编辑器未就绪");
+    }
+    const result = editorGetCurrentImgDataRef.current(
+      { name, extension, quality: 92 },
+      2,
+      true
+    );
+    return result;
+  }, []);
+
+  const uploadEdited = useCallback(
+    async ({ base64Image, targetDir, filename, overwrite }) => {
+      const file = dataUrlToFile(base64Image, filename);
+      const form = new FormData();
+      form.append("image", file);
+      const params = overwrite ? { dir: targetDir, overwrite: "true" } : { dir: targetDir };
+      return api.post("/upload", form, { params });
+    },
+    [api, dataUrlToFile]
+  );
+
+  const handleOverwriteSave = useCallback(async () => {
+    if (!editorFile) return;
+    const { baseName, ext } = splitFilename(editorFile.filename);
+    const targetDir = getDirFromRelPath(editorFile.relPath);
+
+    setEditorSaving(true);
+    let hideLoadingSpinner = null;
+    try {
+      const result = exportFromEditor(baseName, ext);
+      hideLoadingSpinner = result.hideLoadingSpinner;
+      const base64Image = result.imageData?.imageBase64;
+      if (!base64Image) throw new Error("导出失败");
+
+      const res = await uploadEdited({
+        base64Image,
+        targetDir,
+        filename: editorFile.filename,
+        overwrite: true,
+      });
+
+      if (res.data?.success) {
+        message.success("已覆盖保存");
+        setEditorVisible(false);
+        setEditorFile(null);
+        await refreshAfterEdit(targetDir);
+      } else {
+        message.error(res.data?.error || "保存失败");
+      }
+    } catch (e) {
+      message.error(e?.response?.data?.error || e?.message || "保存失败");
+    } finally {
+      try {
+        hideLoadingSpinner && hideLoadingSpinner();
+      } catch (e) { }
+      setEditorSaving(false);
+    }
+  }, [editorFile, exportFromEditor, getDirFromRelPath, refreshAfterEdit, splitFilename, uploadEdited]);
+
+  const handleSaveAs = useCallback(() => {
+    if (!editorFile) return;
+    const { baseName, ext } = splitFilename(editorFile.filename);
+    const targetDir = getDirFromRelPath(editorFile.relPath);
+    let nextName = `${baseName}-edited.${ext}`;
+
+    Modal.confirm({
+      title: "另存为上传",
+      content: (
+        <Input
+          defaultValue={nextName}
+          onChange={(e) => {
+            nextName = e.target.value;
+          }}
+          onPressEnter={() => { }}
+          autoFocus
+        />
+      ),
+      okText: "上传",
+      cancelText: "取消",
+      centered: true,
+      onOk: async () => {
+        const raw = (nextName || "").trim();
+        if (!raw) {
+          message.error("请输入文件名");
+          throw new Error("invalid");
+        }
+
+        const parts = splitFilename(raw);
+        setEditorSaving(true);
+        let hideLoadingSpinner = null;
+        try {
+          const result = exportFromEditor(parts.baseName, parts.ext);
+          hideLoadingSpinner = result.hideLoadingSpinner;
+          const base64Image = result.imageData?.imageBase64;
+          if (!base64Image) throw new Error("导出失败");
+
+          const res = await uploadEdited({
+            base64Image,
+            targetDir,
+            filename: raw,
+            overwrite: false,
+          });
+
+          if (res.data?.success) {
+            message.success("已上传");
+            setEditorVisible(false);
+            setEditorFile(null);
+            await refreshAfterEdit(targetDir);
+          } else {
+            message.error(res.data?.error || "上传失败");
+            throw new Error("failed");
+          }
+        } catch (e) {
+          message.error(e?.response?.data?.error || e?.message || "上传失败");
+          throw e;
+        } finally {
+          try {
+            hideLoadingSpinner && hideLoadingSpinner();
+          } catch (e) { }
+          setEditorSaving(false);
+        }
+      },
+    });
+  }, [editorFile, exportFromEditor, getDirFromRelPath, refreshAfterEdit, splitFilename, uploadEdited]);
+
+  // 分页相关状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => {
+    // 从localStorage读取分页大小，默认为10
+    const savedPageSize = localStorage.getItem("imageGalleryPageSize");
+    return savedPageSize ? parseInt(savedPageSize) : 10;
+  });
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+    total: 0,
+    totalPages: 0,
+  });
+
+  async function fetchImages(
+    targetDir = dir,
+    targetPage = currentPage,
+    targetPageSize = pageSize,
+    targetSearch = searchText,
+    append = false
+  ) {
+    // Check authentication first
+    if (isAuthenticated === false) {
+      return;
+    }
+
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const params = {
+        page: targetPage,
+        pageSize: targetPageSize,
+        ...(targetSearch && { search: targetSearch }),
+        ...(targetDir && { dir: targetDir }),
+      };
+
+      // Magic Search Branch
+      if (magicSearchAvailable && magicSearch && targetSearch && !targetDir) {
+        // Only allow global search for now, or filter by dir in backend? 
+        // Backend implementation of 'search' currently searches ALL vectors.
+        // If we want to support directory filter, we need to update searchRoutes/ClipService.
+        // For now, let's assume global search.
+        if (append) {
+          setLoadingMore(false);
+          return; // No pagination for magic search yet
+        }
+
+        const searchRes = await api.post("/search/semantic", { query: targetSearch, limit: 50 });
+        if (searchRes.data.success) {
+          setImages(searchRes.data.data);
+          setPagination({ current: 1, pageSize: 50, total: searchRes.data.data.length, totalPages: 1 });
+          setHasMore(false);
+          return;
+        }
+      }
+
+      const headers = {};
+      if (targetDir && albumPasswords[targetDir]) {
+        headers["x-album-password"] = albumPasswords[targetDir];
+      }
+
+      const res = await api.get("/images", { params, headers });
+      if (res.data.success) {
+        setImages((prev) => (append ? prev.concat(res.data.data) : res.data.data));
+        setPagination(res.data.pagination);
+        const p = res.data.pagination;
+        setHasMore(p.current < p.totalPages);
+      }
+    } catch (e) {
+      if (e.response && e.response.status === 403 && e.response.data?.locked) {
+        // Album is locked
+        setPendingDir(targetDir);
+        // Do NOT clear passwordInput here to avoid clearing user input if multiple requests fail (race condition)
+        // It is already cleared when dir changes.
+        setPasswordPromptVisible(true);
+        setLoading(false); // Stop loading spinner
+        return;
+      }
+      // Silent fail or minimal logging to avoid spamming user if it's just auth
+      if (e.response && e.response.status !== 401) {
+        message.error("获取图片列表失败");
+      }
+    } finally {
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
+    }
+  }
+
+  // 使用ref来跟踪是否是首次加载和防抖
+  const isInitialized = useRef(false);
+  const searchTimerRef = useRef(null);
+
+  // 统一的数据获取逻辑
+  useEffect(() => {
+    // Clear password when dir changes to force re-entry if navigating back
+    // But we need to be careful not to clear if we are just searching in the same dir?
+    // User requirement: "每次都需要让输入子密码" (Every time need to enter password).
+    // This implies if I leave a locked folder and come back, I need to enter password again.
+    // So clearing all passwords (or at least for this dir?) when `dir` changes is correct.
+    // However, if we clear ALL passwords, it's safer.
+
+    // We only want to clear passwords if the directory ACTUALLY changed.
+    // This effect runs on [dir, pageSize, searchText, isAuthenticated, refreshTrigger].
+    // We need to track previous dir.
+
+    // Actually, simply clearing `albumPasswords` here might cause infinite loops if fetchImages depends on it?
+    // fetchImages reads `albumPasswords` from state closure.
+
+    // Let's implement a dedicated effect for `dir` change to clear passwords.
+  }, [dir]); // Dummy placeholder, real logic below
+
+  // Track previous directory to detect changes
+  const prevDirRef = useRef(dir);
+
+  useEffect(() => {
+    if (prevDirRef.current !== dir) {
+      // Directory changed!
+      // Clear all stored passwords to enforce re-entry
+      setAlbumPasswords({});
+      prevDirRef.current = dir;
+
+      // Clear input and state to prevent race conditions
+      setPasswordInput("");
+      setImages([]);
+      setHasMore(true);
+      setCurrentPage(1);
+      setPendingDir(null);
+
+      // Reset scroll position to top when switching folders
+      window.scrollTo(0, 0);
+    }
+  }, [dir]);
+
+  useEffect(() => {
+    if (!isInitialized.current) {
+      fetchImages("", 1, pageSize, "");
+      isInitialized.current = true;
+      return;
+    }
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+    searchTimerRef.current = setTimeout(() => {
+      setCurrentPage(1);
+      setHasMore(true);
+      fetchImages(dir, 1, pageSize, searchText, false);
+    }, searchText ? 500 : 0);
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [dir, pageSize, searchText, isAuthenticated, refreshTrigger]);
+
+  // 当搜索文本变化时重置到第一页
+  useEffect(() => {
+    if (isInitialized.current) {
+      setCurrentPage(1);
+    }
+  }, [searchText]);
+
+  useEffect(() => {
+    if (!isInitialized.current) return;
+    if (currentPage > 1) {
+      fetchImages(dir, currentPage, pageSize, searchText, true);
+    }
+  }, [currentPage]);
+
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (
+          entry.isIntersecting &&
+          hasMore &&
+          !loading &&
+          !loadingMore &&
+          images.length > 0
+        ) {
+          setCurrentPage((p) => p + 1);
+        }
+      },
+      { root: null, rootMargin: "600px", threshold: 0 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, images.length]);
+
+  const [previewLocation, setPreviewLocation] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Effect for fetching address in Preview Modal
+  useEffect(() => {
+    if (!previewVisible || !imageMeta?.exif?.latitude) {
+      setPreviewLocation("");
+      return;
+    }
+
+    const { latitude, longitude } = imageMeta.exif;
+    let active = true;
+
+    const fetchPreviewLoc = async () => {
+      try {
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=zh-CN`);
+        const geoData = await geoRes.json();
+
+        if (active && geoData) {
+          const addr = geoData.address;
+          // Construct detailed address: Province + City + District + Street + Name
+          // Example: 山东省 临沂市 兰山区 xx路 xx号
+          const parts = [];
+          if (addr.province) parts.push(addr.province);
+          if (addr.city && addr.city !== addr.province) parts.push(addr.city);
+          if (addr.district || addr.county) parts.push(addr.district || addr.county);
+          if (addr.road || addr.street || addr.pedestrian) parts.push(addr.road || addr.street || addr.pedestrian);
+          if (addr.house_number) parts.push(addr.house_number);
+
+          // If specific name exists (amenity, building, etc.), append it
+          const name = geoData.display_name.split(',')[0];
+          if (name && !parts.includes(name)) {
+            // Sometimes name is just street number or road, check if redundant
+            parts.push(name);
+          }
+
+          // If parts is empty or too short, fallback to display_name or city
+          let fullAddr = parts.join(" ");
+
+          // Fallback logic
+          if (!fullAddr) {
+            fullAddr = geoData.display_name;
+          }
+
+          setPreviewLocation(fullAddr);
+        }
+      } catch (e) {
+        // console.error(e);
+      }
+    };
+
+    fetchPreviewLoc();
+
+    return () => { active = false; };
+  }, [previewVisible, imageMeta]);
+
+  // Helper for Upload Result
+  const generateLinks = (type) => {
+    return sessionUploadedFiles.map(file => {
+      const fullUrl = `${window.location.origin}${file.url}`;
+      switch (type) {
+        case 'markdown':
+          return `![${file.originalName}](${fullUrl})`;
+        case 'html':
+          return `<img src="${fullUrl}" alt="${file.originalName}" />`;
+        case 'url':
+        default:
+          return fullUrl;
+      }
+    }).join('\n');
+  };
+
+  const UploadResult = () => {
+    const [activeTab, setActiveTab] = useState('url');
+    const content = generateLinks(activeTab);
+
+    const items = [
+      { key: 'url', label: 'URL' },
+      { key: 'markdown', label: 'Markdown' },
+      { key: 'html', label: 'HTML' },
+    ];
+
+    return (
+      <div style={{ marginTop: 16, background: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)', padding: 12, borderRadius: 8, width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <Tabs
+            activeKey={activeTab}
+            onChange={setActiveTab}
+            items={items}
+            size="small"
+            style={{ marginBottom: 0 }}
+            tabBarStyle={{ marginBottom: 0, borderBottom: 'none' }}
+          />
+          <Button
+            type="primary"
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={() => copyToClipboard(content)}
+          >
+            一键复制
+          </Button>
+        </div>
+        <Input.TextArea
+          value={content}
+          autoSize={{ minRows: 3, maxRows: 6 }}
+          readOnly
+          style={{
+            fontFamily: 'monospace',
+            fontSize: 12,
+            background: isDarkMode ? '#141414' : '#fff',
+            color: isDarkMode ? 'rgba(255,255,255,0.85)' : undefined
+          }}
+        />
+      </div>
+    );
+  };
+
+  // Handle file uploads (Drag & Drop + Paste)
+  const handleUploadFiles = async (files) => {
+    if (!isAuthenticated || isGuest) {
+      message.warning(isGuest ? "游客模式无法上传" : "请先登录");
+      return;
+    }
+    if (!files || files.length === 0) return;
+
+    // Filter images and videos
+    const imageFiles = Array.from(files).filter(file =>
+      file.type.startsWith("image/") || file.type.startsWith("video/")
+    );
+
+    if (imageFiles.length === 0) {
+      message.warning("请选择图片或视频文件");
+      return;
+    }
+
+    // Add to queue
+    const newQueueItems = imageFiles.map(file => ({
+      uid: `upload-${Date.now()}-${Math.random()}`,
+      file: file,
+      name: file.name,
+      progress: 0,
+      status: 'pending'
+    }));
+
+    setUploadQueue(newQueueItems);
+    setIsDragOver(false);
+
+    // Process queue
+    // We use a simple loop here, but could be concurrent if needed
+    // Using for...of loop to process sequentially or Promise.all for parallel?
+    // Parallel is better for user experience, maybe limit concurrency?
+    // Let's do simple Promise.all for now, browser limits connections anyway.
+
+    // Actually, let's process them one by one to ensure we don't overwhelm server if many files
+    // But Promise.all is faster. Let's do parallel.
+
+    // We need to define the upload function inside or outside
+    const uploadSingleFile = async (item) => {
+      const formData = new FormData();
+      if (dir) {
+        formData.append("dir", dir);
+      }
+      formData.append("image", item.file, item.file.name);
+
+      try {
+        // Update status to uploading
+        setUploadQueue(prev => prev.map(i => i.uid === item.uid ? { ...i, status: 'uploading' } : i));
+
+        const res = await api.post("/upload", formData, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            setUploadQueue(prev => prev.map(i => i.uid === item.uid ? { ...i, progress: percentCompleted } : i));
+          },
+        });
+
+        if (res.data && res.data.success) {
+          setUploadQueue(prev => prev.map(i => i.uid === item.uid ? { ...i, status: 'success', progress: 100 } : i));
+          setSessionUploadedFiles(prev => [...prev, res.data.data]);
+          return true;
+        } else {
+          throw new Error(res.data?.error || "上传失败");
+        }
+      } catch (error) {
+        console.error("Upload error:", error);
+        setUploadQueue(prev => prev.map(i => i.uid === item.uid ? { ...i, status: 'error', errorMsg: error.message || "上传出错" } : i));
+        return false;
+      }
+    };
+
+    // Execute uploads
+    const results = await Promise.all(newQueueItems.map(item => uploadSingleFile(item)));
+
+    // Check if any success to refresh
+    if (results.some(r => r === true)) {
+      message.success(`上传完成`);
+      setCurrentPage(1);
+      fetchImages(dir, 1, pageSize, searchText, false);
+    }
+  };
+
+  // Handle URL upload (e.g., from clipboard image URL)
+  const handleUploadFilesFromUrl = async (url) => {
+    if (!isAuthenticated || isGuest) {
+      message.warning(isGuest ? "游客模式无法上传" : "请先登录");
+      return;
+    }
+    if (!url) return;
+
+    // Add to queue for UI feedback
+    const uid = `url-upload-${Date.now()}`;
+    const newQueueItem = {
+      uid,
+      name: url.split('/').pop() || 'url-image',
+      progress: 0,
+      status: 'uploading'
+    };
+    setUploadQueue(prev => [...prev, newQueueItem]);
+
+    try {
+      const response = await api.post('/upload-url', { url, dir });
+      if (response.data?.success) {
+        setUploadQueue(prev => prev.map(i => i.uid === uid ? { ...i, status: 'success', progress: 100 } : i));
+        setSessionUploadedFiles(prev => [...prev, response.data.data]);
+        message.success(`上传完成`);
+        setCurrentPage(1);
+        fetchImages(dir, 1, pageSize, searchText, false);
+      } else {
+        throw new Error(response.data?.error || '上传失败');
+      }
+    } catch (error) {
+      console.error('URL upload error:', error);
+      setUploadQueue(prev => prev.map(i => i.uid === uid ? { ...i, status: 'error', errorMsg: error.message || '上传出错' } : i));
+      message.error(error?.response?.data?.error || error.message || 'URL 上传失败');
+    }
+  };
+
+  // Global Paste Event Listener
+  useEffect(() => {
+    const handlePaste = async (e) => {
+      if (isGuest) return;
+      // Ignore paste if inside input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files = [];
+      let imageUrl = null;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      // Check for image URL in text clipboard
+      if (files.length === 0) {
+        // Try getData first (more reliable for plain text URLs)
+        const plainText = e.clipboardData?.getData('text/plain');
+        const uriList = e.clipboardData?.getData('text/uri-list');
+
+        const textToCheck = uriList || plainText;
+
+        if (textToCheck) {
+          const imageExtPattern = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
+          const urlCandidates = textToCheck.split(/\r?\n/).filter(line => line.trim());
+          for (const text of urlCandidates) {
+            const trimmed = text.trim();
+            if (imageExtPattern.test(trimmed) && trimmed.match(/^https?:\/\//)) {
+              imageUrl = trimmed;
+              break;
+            }
+          }
+        }
+
+        // Fallback: iterate clipboard items
+        if (!imageUrl) {
+          const textItems = e.clipboardData?.items;
+          if (textItems) {
+            for (let i = 0; i < textItems.length; i++) {
+              if (textItems[i].type === 'text/plain' || textItems[i].type === 'text/uri-list') {
+                const text = await new Promise((resolve) => {
+                  textItems[i].getAsString((str) => resolve(str));
+                });
+                if (text) {
+                  const imageExtPattern = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
+                  const urlCandidates = text.split(/\r?\n/).filter(line => line.trim());
+                  for (const line of urlCandidates) {
+                    const trimmed = line.trim();
+                    if (imageExtPattern.test(trimmed) && trimmed.match(/^https?:\/\//)) {
+                      imageUrl = trimmed;
+                      break;
+                    }
+                  }
+                  if (imageUrl) break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        handleUploadFiles(files);
+      } else if (imageUrl) {
+        e.preventDefault();
+        // Upload from URL
+        handleUploadFilesFromUrl(imageUrl);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [dir, isAuthenticated, isGuest]); // Re-bind if dir changes so upload goes to correct dir
+
+  // Global Drag & Drop Listeners
+  useEffect(() => {
+    let dragCounter = 0;
+
+    const handleDragEnter = (e) => {
+      if (isGuest) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        setIsDragOver(true);
+      }
+    };
+
+    const handleDragLeave = (e) => {
+      if (isGuest) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter === 0) {
+        setIsDragOver(false);
+      }
+    };
+
+    const handleDragOver = (e) => {
+      if (isGuest) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const handleDrop = (e) => {
+      if (isGuest) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+      dragCounter = 0;
+
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleUploadFiles(e.dataTransfer.files);
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [dir, isAuthenticated, isGuest]);
+
+  const handleDelete = async (relPath) => {
+    try {
+      await api.delete(`/images/${encodePath(relPath)}`);
+      message.success("删除成功");
+      setImages((prev) => prev.filter((img) => img.relPath !== relPath));
+      const ps = pagination.pageSize || pageSize;
+      const newTotal = Math.max(0, (pagination.total || images.length) - 1);
+      const newTotalPages = Math.max(1, Math.ceil(newTotal / ps));
+      const newCurrent = Math.min(pagination.current || 1, newTotalPages);
+      setPagination({
+        ...pagination,
+        total: newTotal,
+        totalPages: newTotalPages,
+        current: newCurrent,
+      });
+      setHasMore(newCurrent < newTotalPages);
+      if (onDelete) {
+        onDelete(relPath);
+      }
+      return true; // Indicate success for callers
+    } catch (error) {
+      message.error("删除失败");
+      return false;
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  const [previewIndex, setPreviewIndex] = useState(-1);
+  const pendingNavigateRef = useRef(null); // 'next' | null - Used to auto-navigate after loading more in preview mode
+
+  // ... (keep existing helper functions)
+
+  const handleUpdate = (updatedFile) => {
+    setImages(prev => prev.map(img => img.relPath === previewFile.relPath ? { ...img, ...updatedFile } : img));
+    setPreviewFile(updatedFile);
+    setPreviewTitle(updatedFile.filename);
+    setPreviewImage(getCacheBustedUrl(updatedFile));
+  };
+
+  const handlePreview = (file) => {
+    // Find index in current images list
+    const index = images.findIndex(img => img.relPath === file.relPath);
+    setPreviewIndex(index);
+    setPreviewImage(getCacheBustedUrl(file));
+    setPreviewVisible(true);
+    setPreviewTitle(file.filename);
+    setPreviewFile(file);
+
+    // Reset edit states
+    const ext = file.filename.includes(".")
+      ? file.filename.substring(file.filename.lastIndexOf("."))
+      : "";
+    const base = ext ? file.filename.slice(0, -ext.length) : file.filename;
+    setRenameValue(base);
+    setIsEditingName(false);
+    setImageMeta(null);
+    setMetaLoading(true);
+
+    const currentDir =
+      file.relPath && file.relPath.includes("/")
+        ? file.relPath.substring(0, file.relPath.lastIndexOf("/"))
+        : "";
+    setDirValue(currentDir);
+    setIsEditingDir(false);
+
+    // Fetch meta
+    api
+      .get(`/images/meta/${encodePath(file.relPath)}`)
+      .then((res) => {
+        if (res.data && res.data.success) {
+          setImageMeta(res.data.data);
+        }
+      })
+      .catch(() => { })
+      .finally(() => setMetaLoading(false));
+  };
+
+  const showNext = () => {
+    if (previewIndex < images.length - 1) {
+      handlePreview(images[previewIndex + 1]);
+    } else if (hasMore && !loadingMore) {
+      // Reached the end of loaded images but more are available, trigger load more
+      setCurrentPage((p) => p + 1);
+      pendingNavigateRef.current = 'next';
+    }
+  };
+
+  const showPrev = () => {
+    if (previewIndex > 0) {
+      handlePreview(images[previewIndex - 1]);
+    }
+  };
+
+  // Handle auto-navigation to next image after loading more in preview mode
+  useEffect(() => {
+    if (pendingNavigateRef.current === 'next' && previewVisible && !loadingMore) {
+      // Images list has been updated and loading is complete, navigate to next
+      if (previewIndex < images.length - 1) {
+        handlePreview(images[previewIndex + 1]);
+      }
+      pendingNavigateRef.current = null;
+    }
+  }, [images.length, loadingMore]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!previewVisible) return;
+      if (e.key === 'ArrowRight') showNext();
+      if (e.key === 'ArrowLeft') showPrev();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewVisible, previewIndex, images]);
+
+  const handleDownload = (file) => {
+    const link = document.createElement("a");
+    link.href = getCacheBustedUrl(file);
+    link.download = file.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    message.success("开始下载");
+  };
+
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard
+        .writeText(text)
+        .then(() => message.success("链接已复制到剪贴板"))
+        .catch(() => message.error("复制失败"));
+      return;
+    }
+    const input = document.createElement("input");
+    input.style.position = "fixed";
+    input.style.top = "-10000px";
+    input.style.zIndex = "-999";
+    document.body.appendChild(input);
+    input.value = text;
+    input.focus();
+    input.select();
+    try {
+      const ok = document.execCommand("copy");
+      document.body.removeChild(input);
+      if (!ok) {
+        message.error("复制失败");
+      } else {
+        message.success("链接已复制到剪贴板");
+      }
+    } catch (e) {
+      document.body.removeChild(input);
+      message.error("当前浏览器不支持复制功能");
+    }
+  };
+
+  // Helper to distribute items into columns
+  const getColumns = (items) => {
+    const columnsCount = isMobile ? 2 : screens.xl ? 5 : screens.lg ? 4 : screens.md ? 3 : 2;
+    const columns = Array.from({ length: columnsCount }, () => []);
+    items.forEach((item, index) => {
+      columns[index % columnsCount].push(item);
+    });
+    return columns;
+  };
+
+  const handlePasswordSubmit = () => {
+    if (!pendingDir) return;
+
+    // Store password in a temporary session-like way? 
+    // User requested "每次都需要让输入子密码" (Every time need to enter password).
+    // So we should NOT store it in state persistently for auto-retry on subsequent navigations?
+    // Wait, if we don't store it, scrolling/pagination will fail because loadMore calls fetchImages which needs password.
+    // So we MUST store it at least for the current session while viewing this album.
+    // But if user navigates away and comes back, they should enter it again.
+    // Currently `albumPasswords` is state, so it persists as long as ImageGallery is mounted.
+    // If user switches dir via top menu, `dir` changes.
+    // If they switch back to locked dir, we check `albumPasswords[dir]`.
+    // To satisfy "Every time need to enter password", we should CLEAR the password when directory changes.
+
+    // We will implement clearing logic in the `dir` change effect.
+
+    // Store password
+    setAlbumPasswords(prev => ({
+      ...prev,
+      [pendingDir]: passwordInput
+    }));
+
+    // Close modal
+    setPasswordPromptVisible(false);
+
+    setLoading(true);
+    const params = {
+      page: 1,
+      pageSize: pageSize,
+      dir: pendingDir,
+      search: searchText
+    };
+    const headers = { "x-album-password": passwordInput };
+
+    api.get("/images", { params, headers })
+      .then(res => {
+        if (res.data.success) {
+          setImages(res.data.data);
+          setPagination(res.data.pagination);
+          setHasMore(res.data.pagination.current < res.data.pagination.totalPages);
+        }
+      })
+      .catch(e => {
+        message.error("密码错误或访问失败");
+        // Clear invalid password
+        setAlbumPasswords(prev => {
+          const next = { ...prev };
+          delete next[pendingDir];
+          return next;
+        });
+        setPasswordPromptVisible(true);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div
+      style={{ padding: isMobile ? "12px" : "24px", minHeight: "100vh" }}
+      onMouseDown={handleSelectionMouseDown}
+    >
+      {/* Drag Selection Box */}
+      {selectionBox?.isSelecting && (
+        <div
+          style={{
+            position: 'absolute',
+            left: Math.min(selectionBox.startX, selectionBox.currentX),
+            top: Math.min(selectionBox.startY, selectionBox.currentY),
+            width: Math.abs(selectionBox.currentX - selectionBox.startX),
+            height: Math.abs(selectionBox.currentY - selectionBox.startY),
+            border: `1px solid ${colorPrimary}`,
+            background: `${colorPrimary}33`, // 20% opacity
+            zIndex: 9999,
+            pointerEvents: 'none'
+          }}
+        />
+      )}
+
+      {/* Drag & Drop Overlay */}
+      {isDragOver && !isGuest && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 9999,
+            background: 'rgba(22, 119, 255, 0.15)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: `4px dashed ${colorPrimary}`,
+            pointerEvents: 'none', // Allow drops to pass through to window listener
+          }}
+        >
+          <div style={{
+            background: colorBgContainer,
+            padding: '40px 60px',
+            borderRadius: 24,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+            textAlign: 'center'
+          }}>
+            <CloudUploadOutlined style={{ fontSize: 64, color: colorPrimary, marginBottom: 16 }} />
+            <Title level={3} style={{ margin: 0 }}>释放以上传图片</Title>
+            <Text type="secondary">支持多图上传</Text>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Queue Overlay */}
+      {uploadQueue.length > 0 && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+          zIndex: 1005, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            width: '100%', maxWidth: '600px',
+            background: isDarkMode ? '#1f1f1f' : '#fff',
+            borderRadius: '12px', padding: '24px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+            maxHeight: '80vh', display: 'flex', flexDirection: 'column'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
+              <Title level={4} style={{ margin: 0, color: isDarkMode ? '#fff' : undefined }}>
+                正在上传 ({uploadQueue.filter(i => i.status === 'success').length}/{uploadQueue.length})
+              </Title>
+              <Button
+                type="text"
+                icon={<CloseOutlined style={{ color: isDarkMode ? 'rgba(255,255,255,0.45)' : undefined }} />}
+                onClick={() => {
+                  setUploadQueue([]);
+                  setSessionUploadedFiles([]);
+                }}
+              />
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1, paddingRight: '8px' }}>
+              {uploadQueue.map(item => (
+                <div key={item.uid} style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text ellipsis style={{ maxWidth: '70%', color: isDarkMode ? '#fff' : undefined }}>{item.name}</Text>
+                    <Text type="secondary" style={{ color: isDarkMode ? 'rgba(255,255,255,0.45)' : undefined }}>
+                      {item.status === 'error' ? '失败' : item.status === 'success' ? '完成' : `${item.progress}%`}
+                    </Text>
+                  </div>
+                  {/* antd Progress component is imported but we need to ensure correct props */}
+                  <div style={{ position: 'relative', height: 8, background: isDarkMode ? 'rgba(255,255,255,0.1)' : '#f5f5f5', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{
+                      position: 'absolute', left: 0, top: 0, bottom: 0,
+                      width: `${item.progress}%`,
+                      background: item.status === 'error' ? '#ff4d4f' : item.status === 'success' ? '#52c41a' : '#1677ff',
+                      transition: 'width 0.3s ease'
+                    }} />
+                  </div>
+                  {item.errorMsg && <Text type="danger" style={{ fontSize: 12 }}>{item.errorMsg}</Text>}
+                </div>
+              ))}
+            </div>
+            {!uploading && (
+              <>
+                {sessionUploadedFiles.length > 0 && <UploadResult />}
+                <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                  <Button type="primary" onClick={() => {
+                    setUploadQueue([]);
+                    setSessionUploadedFiles([]);
+                  }}>
+                    关闭
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Capsule Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          marginBottom: 32,
+          position: "sticky",
+          top: 20,
+          zIndex: 100,
+          pointerEvents: "none", // Allow clicks to pass through the container area
+        }}
+      >
+        <div
+          style={{
+            pointerEvents: "auto",
+            background: capsuleStyle.background,
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            padding: "6px",
+            borderRadius: "100px",
+            border: capsuleStyle.border,
+            boxShadow: capsuleStyle.boxShadow,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            maxWidth: "90vw",
+            width: "auto",
+            transition: "all 0.3s ease",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              paddingRight: 2,
+              paddingLeft: 4,
+            }}
+          >
+            <img
+              src="/favicon.svg"
+              alt="云图"
+              style={{
+                width: 24,
+                height: 24,
+                objectFit: "contain",
+                filter: isDarkMode ? "brightness(1.2)" : "none" // Slight adjust for dark mode if needed
+              }}
+            />
+          </div>
+          <div style={{ width: 180, transition: "width 0.3s ease" }}>
+            <DirectorySelector
+              value={dir}
+              onChange={setDir}
+              placeholder="所有目录"
+              style={{ width: "100%" }}
+              allowInput={true}
+              api={api}
+              bordered={false}
+              size="middle"
+              refreshKey={`${directoryRefreshKey}-${isAuthenticated}`}
+            />
+          </div>
+          <div
+            style={{
+              width: 1,
+              height: 20,
+              background: capsuleStyle.dividerColor,
+            }}
+          />
+          <div style={{ width: 200, transition: "width 0.3s ease" }}>
+            <Input
+              placeholder={magicSearch ? "描述图片内容..." : "拖拽图片到页面即可上传..."}
+              prefix={
+                magicSearchAvailable ? (
+                  <div
+                    onClick={() => {
+                      setMagicSearch(!magicSearch);
+                      // If clearing, maybe trigger refresh?
+                      // Let existing effects handle it (searchText dependency)
+                    }}
+                    style={{ cursor: 'pointer', marginRight: 4, display: 'flex' }}
+                    title="Magic Search"
+                  >
+                    <MagicIcon active={magicSearch} />
+                  </div>
+                ) : (
+                  <SearchOutlined style={{ color: capsuleStyle.iconColor }} />
+                )
+              }
+              bordered={false}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ background: "transparent", color: colorText }}
+            />
+          </div>
+          <div
+            style={{
+              width: 1,
+              height: 20,
+              background: capsuleStyle.dividerColor,
+            }}
+          />
+          <Popover
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            content={
+              <div style={{ padding: 4 }}>
+                {!isGuest && (
+                  <Button
+                    type="text"
+                    icon={<FolderOutlined />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setTimeout(() => setAlbumManagerVisible(true), 300);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      height: 40,
+                      fontSize: 14
+                    }}
+                  >
+                    相册管理
+                  </Button>
+                )}
+                {!isGuest && (
+                  <Button
+                    type="text"
+                    icon={<AreaChartOutlined />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      window.open("/traffic", "_blank");
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      height: 40,
+                      fontSize: 14
+                    }}
+                  >
+                    流量看板
+                  </Button>
+                )}
+                {!isGuest && (
+                  <Button
+                    type="text"
+                    icon={<CodeOutlined />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setSvgToolVisible(true);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      height: 40,
+                      fontSize: 14
+                    }}
+                  >
+                    SVG 工具
+                  </Button>
+                )}
+                <Button
+                  type="text"
+                  icon={<ApiOutlined />}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    window.open("/opendocs", "_blank");
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    display: "flex",
+                    alignItems: "center",
+                    height: 40,
+                    fontSize: 14
+                  }}
+                >
+                  开放接口
+                </Button>
+                {!isGuest && (
+                  <Button
+                    type="text"
+                    icon={<SettingOutlined />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setSettingsVisible(true);
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      height: 40,
+                      fontSize: 14
+                    }}
+                  >
+                    设置
+                  </Button>
+                )}
+              </div>
+            }
+            trigger="hover"
+            placement="bottomLeft"
+            arrow={false}
+            overlayInnerStyle={{ padding: 0, borderRadius: 12, overflow: "hidden" }}
+          >
+            <div
+              style={{
+                padding: "0 12px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                height: "100%",
+                transition: "opacity 0.2s",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 0.7}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = 1}
+            >
+              <MenuOutlined style={{ color: capsuleStyle.iconColor, fontSize: 18 }} />
+            </div>
+          </Popover>
+        </div>
+      </div>
+
+      {loading ? (
+        <SkeletonCard count={pageSize} columns={isMobile ? 2 : screens.xl ? 5 : screens.lg ? 4 : screens.md ? 3 : 2} gutter={8} isDarkMode={isDarkMode} />
+      ) : images.length === 0 ? (
+        <Empty description="暂无图片" style={{ marginTop: 100 }} />
+      ) : (
+        <>
+          {groups.map((group) => (
+            <div key={group.date} style={{ marginBottom: 24 }}>
+              <div
+                style={{
+                  marginBottom: 16,
+                  paddingLeft: 8,
+                  opacity: 0.8,
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  letterSpacing: "0.5px",
+                  textTransform: "uppercase",
+                  color: colorTextSecondary, // Applied theme color
+                }}
+              >
+                {group.date}
+              </div>
+
+              {/* Masonry Layout - with batch selection support */}
+              <Masonry
+                columns={
+                  isMobile ? 2 : screens.xl ? 5 : screens.lg ? 4 : screens.md ? 3 : 2
+                }
+                gutter={8}
+                items={group.items.map((imgItem, index) => ({
+                  key: imgItem.relPath || `item-${group.date}-${index}`,
+                  data: imgItem,
+                }))}
+                itemRender={({ data: imgItem }) => (
+                  <ImageItem
+                    image={imgItem}
+                    hoverKey={hoverKey}
+                    setHoverKey={setHoverKey}
+                    handlePreview={handlePreview}
+                    formatFileSize={formatFileSize}
+                    isMobile={isMobile}
+                    handleDownload={handleDownload}
+                    onCopyClick={handleCopyClick}
+                    handleDelete={handleDelete}
+                    handleEdit={handleEdit}
+                    hoverLocation={hoverLocation}
+                    isBatchMode={isBatchMode}
+                    isSelected={selectedItems.has(imgItem.relPath)}
+                    isGuest={isGuest}
+                    onToggleSelect={(id) => {
+                      const newSet = new Set(selectedItems);
+                      if (newSet.has(id)) newSet.delete(id);
+                      else newSet.add(id);
+                      onSelectionChange(newSet);
+                    }}
+                    registerRef={registerRef}
+                    thumbnailWidth={thumbnailWidth}
+                    imageRadius={imageRadius}
+                  />
+                )}
+              />
+
+            </div>
+          ))}
+          <div ref={loadMoreRef} style={{ height: 20 }} />
+          {loadingMore && (
+            <div style={{ marginTop: 16 }}>
+              <SkeletonCard count={Math.min(pageSize, 6)} columns={isMobile ? 2 : screens.xl ? 5 : screens.lg ? 4 : screens.md ? 3 : 2} gutter={8} isDarkMode={isDarkMode} />
+            </div>
+          )}
+        </>
+      )}
+
+      <ImageDetailModal
+        visible={previewVisible}
+        onCancel={() => {
+          setPreviewVisible(false);
+          setIsEditingName(false);
+        }}
+        file={previewFile}
+        api={api}
+        onNext={showNext}
+        onPrev={showPrev}
+        hasNext={previewIndex < images.length - 1 || hasMore}
+        hasPrev={previewIndex > 0}
+        onDelete={(relPath) => {
+          handleDelete(relPath);
+          setPreviewVisible(false);
+        }}
+        onUpdate={handleUpdate}
+        isGuest={isGuest}
+      />
+      <ImageEditModal
+        open={editorVisible}
+        file={editorFile}
+        editorSaving={editorSaving}
+        onCancel={() => {
+          setEditorVisible(false);
+          setEditorFile(null);
+        }}
+        onClose={() => {
+          setEditorVisible(false);
+          setEditorFile(null);
+        }}
+        onOverwriteSave={handleOverwriteSave}
+        onSaveAs={handleSaveAs}
+        getEditorDefaults={getEditorDefaults}
+        getCurrentImgDataFnRef={editorGetCurrentImgDataRef}
+        theme={isDarkMode ? "dark" : "light"}
+      />
+      <SvgToolModal visible={svgToolVisible} onClose={() => setSvgToolVisible(false)} api={api} />
+      <AlbumManager
+        visible={albumManagerVisible}
+        onClose={() => {
+          setAlbumManagerVisible(false);
+          setDirectoryRefreshKey(prev => prev + 1);
+        }}
+        api={api}
+        onSelectAlbum={(path) => setDir(path)}
+      />
+
+      <SettingsModal
+        open={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        currentTheme={currentTheme}
+        onThemeChange={onThemeChange}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
+
+      <CopyLinksModal />
+
+      {/* Album Password Prompt Modal */}
+      <Modal
+        open={passwordPromptVisible}
+        title="请输入相册密码"
+        onOk={handlePasswordSubmit}
+        onCancel={() => {
+          setPasswordPromptVisible(false);
+          setDir(""); // Go back to root or previous? Root is safer.
+        }}
+        okText="确认"
+        cancelText="取消"
+        centered
+        closable={false}
+        maskClosable={false}
+        width={360}
+      >
+        <div style={{ marginBottom: 20 }}>该相册受密码保护，请输入密码以访问。</div>
+        <Input.Password
+          size="large"
+          value={passwordInput}
+          onChange={e => setPasswordInput(e.target.value)}
+          placeholder="输入密码"
+          onPressEnter={handlePasswordSubmit}
+          autoFocus
+          style={{ height: 48, fontSize: 16 }}
+        />
+      </Modal>
+
+    </div>
+  );
+};
+
+export default ImageGallery;
