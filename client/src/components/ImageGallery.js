@@ -2220,24 +2220,26 @@ const ImageGallery = ({ onDelete, onRefresh, api, isAuthenticated, isGuest, refr
                     SVG 工具
                   </Button>
                 )}
-                <Button
-                  type="text"
-                  icon={<ApiOutlined />}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    window.open("/opendocs", "_blank");
-                  }}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    display: "flex",
-                    alignItems: "center",
-                    height: 40,
-                    fontSize: 14
-                  }}
-                >
-                  开放接口
-                </Button>
+                {!isGuest && (
+                  <Button
+                    type="text"
+                    icon={<ApiOutlined />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      window.open("/opendocs", "_blank");
+                    }}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      height: 40,
+                      fontSize: 14
+                    }}
+                  >
+                    开放接口
+                  </Button>
+                )}
                 {!isGuest && (
                   <Button
                     type="text"

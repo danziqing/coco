@@ -16,9 +16,10 @@ import {
   CloseOutlined,
   DeleteOutlined,
   DeliveredProcedureOutlined,
-  GlobalOutlined,
+  NotificationOutlined,
 } from "@ant-design/icons";
 import UploadComponent from "./UploadComponent";
+import BulletinBoard from "./BulletinBoard";
 
 const FloatingToolbar = ({
   onThemeChange,
@@ -34,6 +35,7 @@ const FloatingToolbar = ({
   isGuest,
 }) => {
   const [uploadVisible, setUploadVisible] = useState(false);
+  const [bulletinVisible, setBulletinVisible] = useState(false);
   const { token } = theme.useToken();
   
   // Infer dark mode
@@ -155,11 +157,11 @@ const FloatingToolbar = ({
 
         <div style={{ width: 1, height: 16, background: isDarkMode ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.1)" }} />
 
-        <Tooltip title="轨迹地图" placement="top">
+        <Tooltip title="公告板" placement="top">
           <Button
             shape="circle"
-            icon={<GlobalOutlined />}
-            onClick={() => window.location.href = '/map'}
+            icon={<NotificationOutlined />}
+            onClick={() => setBulletinVisible(true)}
             size="middle"
             type="text"
             style={buttonStyle}
@@ -259,6 +261,13 @@ const FloatingToolbar = ({
            background-color: ${isDarkMode ? "rgba(0, 0, 0, 0.7)" : "rgba(255, 255, 255, 0.8)"} !important;
         }
       `}</style>
+
+      <BulletinBoard
+        open={bulletinVisible}
+        onClose={() => setBulletinVisible(false)}
+        isGuest={isGuest}
+        api={api}
+      />
 
       <FloatButton.BackTop 
         style={{ 

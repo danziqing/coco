@@ -299,11 +299,23 @@ function App() {
           }
         >
         {isApiDocs ? (
-          <ApiDocs />
+          authLoading ? (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}><Spin size="large" /></div>
+          ) : isGuest ? (
+            <div style={{ textAlign: "center", paddingTop: 100, color: "#999" }}>无权访问</div>
+          ) : (
+            <ApiDocs />
+          )
         ) : isMapPage ? (
           <MapPage />
         ) : isTrafficDashboard ? (
-          <TrafficDashboard />
+          authLoading ? (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}><Spin size="large" /></div>
+          ) : isGuest ? (
+            <div style={{ textAlign: "center", paddingTop: 100, color: "#999" }}>无权访问</div>
+          ) : (
+            <TrafficDashboard />
+          )
         ) : isShareView ? (
           <ShareView currentTheme={currentTheme} onThemeChange={handleThemeChange} />
         ) : authLoading ? (

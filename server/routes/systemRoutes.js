@@ -64,6 +64,29 @@ router.post('/auth/login', (req, res) => {
     res.status(401).json({ success: false, error: "Incorrect password" });
 });
 
+// 公告板 API（公开读取，无需密码）
+router.get('/board', (req, res) => {
+    try {
+        const row = db.prepare('SELECT value, updated_at FROM user_settings WHERE key = ?').get('bulletin');
+        let content = '';
+        let updatedAt = null;
+        if (row) {
+            try {
+                const parsed = JSON.parse(row.value);
+                content = parsed.content || '';
+                updatedAt = row.updated_at;
+            } catch {
+                content = row.value;
+                updatedAt = row.updated_at;
+            }
+        }
+        res.json({ success: true, data: { content, updatedAt } });
+    } catch (e) {
+        console.error("Get board error:", e);
+        res.status(500).json({ success: false, error: "获取公告失败" });
+    }
+});
+
 // 用户设置 API
 router.get('/settings', (req, res) => {
     try {
