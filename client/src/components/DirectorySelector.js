@@ -163,12 +163,6 @@ const DirectorySelector = ({
           </div>
         )}
       >
-        <Option value="" searchValue="全部图片" label="全部图片">
-          <Space>
-            <FolderOutlined />
-            <Text>全部图片</Text>
-          </Space>
-        </Option>
         {directories.map((dir) => {
           const parts = (dir.path || "").split("/").filter(Boolean);
           const depth = parts.length - 1;

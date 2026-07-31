@@ -631,7 +631,7 @@ const ImageGallery = ({ onDelete, onRefresh, api, isAuthenticated, isGuest, refr
   const [previewImage, setPreviewImage] = useState("");
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewFile, setPreviewFile] = useState(null);
-  const [dir, setDir] = useState("");
+  const [dir, setDir] = useState("01");
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [hoverKey, setHoverKey] = useState(null);
@@ -1268,7 +1268,7 @@ const ImageGallery = ({ onDelete, onRefresh, api, isAuthenticated, isGuest, refr
 
   useEffect(() => {
     if (!isInitialized.current) {
-      fetchImages("", 1, pageSize, "");
+      fetchImages(dir, 1, pageSize, "");
       isInitialized.current = true;
       return;
     }
@@ -2106,9 +2106,10 @@ const ImageGallery = ({ onDelete, onRefresh, api, isAuthenticated, isGuest, refr
             <DirectorySelector
               value={dir}
               onChange={setDir}
-              placeholder="所有目录"
+              placeholder="选择相册"
               style={{ width: "100%" }}
               allowInput={true}
+              allowClear={false}
               api={api}
               bordered={false}
               size="middle"
